@@ -23,7 +23,6 @@ function send_header {
       echo "$x"$'\r'
     done
     echo $'\r'
-    #sed 's/$/\r/' <<<"HTTP/1.0 $*"$'\n'"$REPLY_HEADERS"
 }
 
 function bad_request {
@@ -32,7 +31,7 @@ function bad_request {
 }
 
 IFS=' ' read HTTP_METHOD URL_PATH HTTP_VER || bad_request
-[[ GET == $HTTP_METHOD ]] || bad_request
+[[ "x$HTTP_METHOD" == xGET && "x$URL_PATH" == x/* ]] || bad_request
 URL_PATH="$DOCROOT$URL_PATH"
 
 # If URL_PATH contains
@@ -43,29 +42,28 @@ if [[ "$URL_PATH" == */.* || "$URL_PATH" == *%* || -z "${URL_PATH}" ]]; then
     bad_request
 fi
 
-# Check the URL requested.
-# If it's a text file, serve it directly.
-# If it's a binary file, base64 encode it first.
-# If it's a directory, perform an "ls -la".
-# Otherwise, return a 404.
-if [ -f ${URL_PATH} -a -r ${URL_PATH} ]; then
-    exec 3<"$URL_PATH"
-    REPLY_HEADERS+=("Content-type: $(file --brief --mime-type "$URL_PATH")")
-    REPLY_HEADERS+=("Content-length: $(stat -c%s "$URL_PATH")")
-elif [ -f ${URL_PATH} -a ! -r ${URL_PATH} ]; then
-    send_header 403 Forbidden
-    exit
-elif [ -d "${URL_PATH}" ]; then
-    if [ ! -x "${URL_PATH}" ]; then
+if [ -f ${URL_PATH} ]; then
+    # regular file
+    if [ ! -r ${URL_PATH} ]; then
+        # unreadable
         send_header 403 Forbidden
-        exit
+    else
+        # readable: send contents
+        REPLY_HEADERS+=("Content-type: $(file --brief --mime-type "$URL_PATH")")
+        REPLY_HEADERS+=("Content-length: $(stat -c%s "$URL_PATH")")
+        send_header 200 OK
+        cat "$URL_PATH"
     fi
-    exec 3< <(ls -l "$URL_PATH")
-    REPLY_HEADERS+=("Content-type: text/plain")
+elif [ -d "${URL_PATH}" ]; then
+    # directory
+    if [ ! -x "${URL_PATH}" ]; then
+        # non-listable
+        send_header 403 Forbidden
+    else
+        REPLY_HEADERS+=("Content-type: text/plain")
+        send_header 200 OK
+        ls -l "$URL_PATH"
+    fi
 else
     send_header 404 "Not Found"
-    exit
 fi
-
-send_header 200 OK
-cat <&3
